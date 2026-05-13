@@ -10,6 +10,22 @@ Requirements
 ------------
     pip install pandas openpyxl
 
+Logging
+-------
+This module uses Python's standard logging system under the logger name
+``excel_ingestor``. The load summary (verbose=True) is emitted at INFO
+level; warnings are emitted at WARNING level.
+
+By default (no logging configured by the caller) these messages are
+silently absorbed — standard library behaviour for a module logger.
+Configure logging in your application to see them:
+
+    import logging
+    logging.basicConfig(level=logging.INFO)   # see full summary + warnings
+    logging.getLogger("excel_ingestor").setLevel(logging.WARNING)  # warnings only
+
+The CLI entry point configures its own minimal handler automatically.
+
 Quick Start
 -----------
 Simplest use — first sheet, all defaults on:
@@ -18,7 +34,7 @@ Simplest use — first sheet, all defaults on:
 
     df = ingest_excel("data.xlsx")
 
-Load a named sheet, suppress the summary printout:
+Load a named sheet, suppress the summary log:
 
     df = ingest_excel("report.xlsx", sheet_name="Summary", verbose=False)
 
@@ -56,10 +72,16 @@ Author : In One We Trust (https://www.inonewetrust.com)
 GitHub : https://github.com/skirk6/InOneWeTrust
 """
 
+import logging
 import os
 import re
 import sys
+
 import pandas as pd
+
+# Module-level logger — callers configure handlers and level; this module
+# never touches the root logger or calls basicConfig itself.
+logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────
@@ -92,7 +114,7 @@ def ingest_excel(
     coerce_numeric: bool           Apply pd.to_numeric after cleaning; unparseable values become NaN. Default: True.
     dtype_map     : dict           Optional {column: dtype} passed directly to pd.read_excel for explicit typing.
     skip_rows     : int | list     Row(s) to skip after the header row (forwarded to pd.read_excel skiprows).
-    verbose       : bool           Print a load-summary report showing shape, dtypes, and null counts. Default: True.
+    verbose       : bool           Emit a load-summary report via logger.info(). Default: True.
 
     Returns
     -------
@@ -162,7 +184,7 @@ def ingest_excel(
         _handle_read_error(exc, file_path, sheet_name)
 
     if df.empty:
-        _warn(f"Sheet '{sheet_name}' loaded but contains no data.")
+        logger.warning("Sheet '%s' loaded but contains no data.", sheet_name)
         return df
 
     # ── 3. Sanitise column names ───────────────
@@ -178,7 +200,7 @@ def ingest_excel(
 
     # ── 5. Verbose summary ─────────────────────
     if verbose:
-        _print_summary(df, file_path, sheet_name)
+        _log_summary(df, file_path, sheet_name)
 
     return df
 
@@ -211,9 +233,10 @@ def _resolve_target_cols(df: pd.DataFrame, numeric_cols: list[str] | None) -> li
     if numeric_cols is not None:
         missing = [c for c in numeric_cols if c not in df.columns]
         if missing:
-            _warn(
-                f"numeric_cols references columns not found in sheet: {missing}\n"
-                f"Available columns: {list(df.columns)}"
+            logger.warning(
+                "numeric_cols references columns not found in sheet: %s\nAvailable columns: %s",
+                missing,
+                list(df.columns),
             )
         return [c for c in numeric_cols if c in df.columns]
 
@@ -262,34 +285,39 @@ def _clean_numeric_series(
 
 
 # ──────────────────────────────────────────────
-# Helper: Verbose Summary Report
+# Helper: Load Summary Logger
 # ──────────────────────────────────────────────
 
-def _print_summary(df: pd.DataFrame, file_path: str, sheet_name) -> None:
-    """Print a formatted load summary showing file info, shape, dtypes, and null counts per column."""
+def _log_summary(df: pd.DataFrame, file_path: str, sheet_name) -> None:
+    """Build the full load-summary report as a single string and emit it at INFO level."""
     file_name = os.path.basename(file_path)
-    total_nulls = df.isnull().sum().sum()
+    total_nulls = int(df.isnull().sum().sum())
     null_cols = df.columns[df.isnull().any()].tolist()
 
-    print("=" * 56)
-    print("  Excel Ingestor — Load Summary")
-    print("=" * 56)
-    print(f"  File    : {file_name}")
-    print(f"  Sheet   : {sheet_name}")
-    print(f"  Rows    : {len(df):,}")
-    print(f"  Columns : {len(df.columns):,}")
-    print(f"  Nulls   : {total_nulls:,} total", end="")
+    lines = [
+        "=" * 56,
+        "  Excel Ingestor — Load Summary",
+        "=" * 56,
+        f"  File    : {file_name}",
+        f"  Sheet   : {sheet_name}",
+        f"  Rows    : {len(df):,}",
+        f"  Columns : {len(df.columns):,}",
+    ]
+
+    null_line = f"  Nulls   : {total_nulls:,} total"
     if null_cols:
-        print(f"  →  {null_cols}")
-    else:
-        print()
-    print("-" * 56)
-    print("  Column dtypes:")
+        null_line += f"  →  {null_cols}"
+    lines.append(null_line)
+
+    lines.append("-" * 56)
+    lines.append("  Column dtypes:")
     for col, dtype in df.dtypes.items():
-        null_count = df[col].isnull().sum()
+        null_count = int(df[col].isnull().sum())
         flag = f"  ⚠ {null_count} null(s)" if null_count else ""
-        print(f"    {col:<30} {str(dtype):<10}{flag}")
-    print("=" * 56)
+        lines.append(f"    {col:<30} {str(dtype):<10}{flag}")
+    lines.append("=" * 56)
+
+    logger.info("\n".join(lines))
 
 
 # ──────────────────────────────────────────────
@@ -307,11 +335,6 @@ def _handle_read_error(exc: Exception, file_path: str, sheet_name) -> None:
     raise RuntimeError(
         f"[ingest_excel] Failed to read '{os.path.basename(file_path)}': {msg}"
     ) from exc
-
-
-def _warn(msg: str) -> None:
-    """Print a labelled warning to stdout."""
-    print(f"[ingest_excel] WARNING: {msg}")
 
 
 # ──────────────────────────────────────────────
@@ -346,6 +369,11 @@ Notes:
 """.strip()
 
 if __name__ == "__main__":
+    # Configure a clean handler for CLI use — no timestamp or level prefix,
+    # just the message. This only affects the root logger when run directly;
+    # it does not interfere with library callers' logging configuration.
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
     args = sys.argv[1:]
 
     if not args or args[0] in ("--help", "-h", "help"):
