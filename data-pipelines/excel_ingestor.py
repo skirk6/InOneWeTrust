@@ -73,15 +73,20 @@ GitHub : https://github.com/skirk6/InOneWeTrust
 """
 
 import logging
-import os
 import re
 import sys
+from pathlib import Path
+from typing import Any, NoReturn
 
+import numpy as np
 import pandas as pd
 
 # Module-level logger — callers configure handlers and level; this module
 # never touches the root logger or calls basicConfig itself.
 logger = logging.getLogger(__name__)
+
+# Public API surface — internal helpers are excluded from wildcard imports.
+__all__ = ["ingest_excel"]
 
 
 # ──────────────────────────────────────────────
@@ -96,7 +101,7 @@ def ingest_excel(
     strip_currency: bool = True,
     strip_commas: bool = True,
     coerce_numeric: bool = True,
-    dtype_map: dict | None = None,
+    dtype_map: dict[str, Any] | None = None,
     skip_rows: int | list[int] | None = None,
     verbose: bool = True,
 ) -> pd.DataFrame:
@@ -105,16 +110,27 @@ def ingest_excel(
 
     Parameters
     ----------
-    file_path     : str            Absolute or relative path to the Excel file (.xlsx / .xls / .xlsm / .xlsb).
-    sheet_name    : str | int      Sheet name or zero-based index to load. Default: first sheet (0).
-    header_row    : int            Row index (0-based) to use as column headers. Default: 0.
-    numeric_cols  : list[str]      Specific columns to clean as numbers. None = auto-detect all likely numeric columns.
-    strip_currency: bool           Remove $, £, €, ¥ before numeric conversion. Default: True.
-    strip_commas  : bool           Remove thousand-separator commas (e.g. 1,234 → 1234). Default: True.
-    coerce_numeric: bool           Apply pd.to_numeric after cleaning; unparseable values become NaN. Default: True.
-    dtype_map     : dict           Optional {column: dtype} passed directly to pd.read_excel for explicit typing.
-    skip_rows     : int | list     Row(s) to skip after the header row (forwarded to pd.read_excel skiprows).
-    verbose       : bool           Emit a load-summary report via logger.info(). Default: True.
+    file_path : str
+        Absolute or relative path to the Excel file (.xlsx / .xls / .xlsm / .xlsb).
+    sheet_name : str or int, optional
+        Sheet name or zero-based index to load. Default: first sheet (0).
+    header_row : int, optional
+        Row index (0-based) to use as column headers. Default: 0.
+    numeric_cols : list of str, optional
+        Specific columns to clean as numbers. None = auto-detect all likely
+        numeric columns using the full cleaning pipeline as a probe.
+    strip_currency : bool, optional
+        Remove $, £, €, ¥ before numeric conversion. Default: True.
+    strip_commas : bool, optional
+        Remove thousand-separator commas (e.g. 1,234 → 1234). Default: True.
+    coerce_numeric : bool, optional
+        Apply pd.to_numeric after cleaning; unparseable values become NaN. Default: True.
+    dtype_map : dict of {str: Any}, optional
+        Column-to-dtype map forwarded directly to pd.read_excel (e.g. ``{"id": str}``).
+    skip_rows : int or list of int, optional
+        Row(s) to skip after the header row (forwarded to pd.read_excel skiprows).
+    verbose : bool, optional
+        Emit a load-summary report via logger.info(). Default: True.
 
     Returns
     -------
@@ -123,10 +139,14 @@ def ingest_excel(
 
     Raises
     ------
-    FileNotFoundError  file_path does not exist on disk.
-    ValueError         File extension is not a recognised Excel format.
-    KeyError           sheet_name is not found in the workbook.
-    RuntimeError       Unexpected error from pandas or openpyxl.
+    FileNotFoundError
+        file_path does not exist on disk.
+    ValueError
+        File extension is not a recognised Excel format.
+    KeyError
+        sheet_name is not found in the workbook.
+    RuntimeError
+        Unexpected error from pandas or openpyxl.
 
     Examples
     --------
@@ -157,17 +177,18 @@ def ingest_excel(
     )
     """
 
+    path = Path(file_path)
+
     # ── 1. Validate file path ──────────────────
-    if not os.path.exists(file_path):
+    if not path.exists():
         raise FileNotFoundError(
             f"[ingest_excel] File not found: '{file_path}'\n"
             "Check the path and try again."
         )
 
-    ext = os.path.splitext(file_path)[-1].lower()
-    if ext not in (".xlsx", ".xls", ".xlsm", ".xlsb"):
+    if path.suffix.lower() not in (".xlsx", ".xls", ".xlsm", ".xlsb"):
         raise ValueError(
-            f"[ingest_excel] Unsupported file type: '{ext}'. "
+            f"[ingest_excel] Unsupported file type: '{path.suffix}'. "
             "Expected .xlsx, .xls, .xlsm, or .xlsb."
         )
 
@@ -181,7 +202,7 @@ def ingest_excel(
             dtype=dtype_map,
         )
     except Exception as exc:
-        _handle_read_error(exc, file_path, sheet_name)
+        _handle_read_error(exc, path, sheet_name)
 
     if df.empty:
         logger.warning("Sheet '%s' loaded but contains no data.", sheet_name)
@@ -192,7 +213,7 @@ def ingest_excel(
 
     # ── 4. Number cleaning ─────────────────────
     if coerce_numeric:
-        target_cols = _resolve_target_cols(df, numeric_cols)
+        target_cols = _resolve_target_cols(df, numeric_cols, strip_currency, strip_commas)
         for col in target_cols:
             df[col] = _clean_numeric_series(
                 df[col], strip_currency=strip_currency, strip_commas=strip_commas
@@ -200,7 +221,7 @@ def ingest_excel(
 
     # ── 5. Verbose summary ─────────────────────
     if verbose:
-        _log_summary(df, file_path, sheet_name)
+        _log_summary(df, path, sheet_name)
 
     return df
 
@@ -209,9 +230,13 @@ def ingest_excel(
 # Helper: Column Name Sanitiser
 # ──────────────────────────────────────────────
 
-def _clean_column_names(columns) -> list[str]:
-    """Lowercase, strip whitespace, replace special characters with underscores, and deduplicate collisions."""
-    seen, result = {}, []
+def _clean_column_names(columns: pd.Index) -> list[str]:
+    """Lowercase, strip whitespace, replace special characters with underscores, and deduplicate collisions.
+
+    First occurrence keeps its name; collisions are suffixed _1, _2, …
+    """
+    seen: dict[str, int] = {}
+    result: list[str] = []
     for col in columns:
         name = str(col).strip().lower()
         name = re.sub(r"[^\w]+", "_", name).strip("_") or "unnamed"
@@ -228,28 +253,36 @@ def _clean_column_names(columns) -> list[str]:
 # Helper: Resolve Which Columns to Clean
 # ──────────────────────────────────────────────
 
-def _resolve_target_cols(df: pd.DataFrame, numeric_cols: list[str] | None) -> list[str]:
-    """Return the caller-supplied column list (validated) or auto-detect object columns that are >50% numeric."""
+def _resolve_target_cols(
+    df: pd.DataFrame,
+    numeric_cols: list[str] | None,
+    strip_currency: bool,
+    strip_commas: bool,
+) -> list[str]:
+    """Return the caller-supplied column list (validated) or auto-detect via the full cleaning pipeline.
+
+    Auto-detection runs the actual _clean_numeric_series probe on each object column so that
+    accounting negatives, percentages, and mixed-currency values are caught — not just bare digits.
+    Accepts a column when >50% of non-null values convert successfully.
+    """
     if numeric_cols is not None:
         missing = [c for c in numeric_cols if c not in df.columns]
         if missing:
             logger.warning(
-                "numeric_cols references columns not found in sheet: %s\nAvailable columns: %s",
-                missing,
-                list(df.columns),
+                "numeric_cols references columns not in sheet: %s. Available: %s",
+                ", ".join(missing),
+                ", ".join(df.columns),
             )
         return [c for c in numeric_cols if c in df.columns]
 
-    # Auto-detect: object columns where more than half of non-null values parse as numbers
+    # Auto-detect using the full cleaning pipeline as a probe.
     candidates = []
     for col in df.select_dtypes(include="object").columns:
-        sample = df[col].dropna().astype(str)
+        sample = df[col].dropna()
         if sample.empty:
             continue
-        looks_numeric = sample.str.replace(r"[$£€¥,\s]", "", regex=True).str.match(
-            r"^-?\d+\.?\d*$"
-        )
-        if looks_numeric.mean() > 0.5:
+        cleaned = _clean_numeric_series(sample, strip_currency=strip_currency, strip_commas=strip_commas)
+        if cleaned.notna().mean() > 0.5:
             candidates.append(col)
     return candidates
 
@@ -278,8 +311,8 @@ def _clean_numeric_series(
     # Remove stray whitespace and percentage signs
     s = s.str.replace(r"[%\s]", "", regex=True)
 
-    # Normalise Excel-style blank representations to None
-    s = s.replace({"nan": None, "": None, "none": None, "n/a": None, "-": None})
+    # Normalise Excel-style blank representations to NaN
+    s = s.replace({"nan": np.nan, "": np.nan, "none": np.nan, "n/a": np.nan, "-": np.nan})
 
     return pd.to_numeric(s, errors="coerce")
 
@@ -288,9 +321,8 @@ def _clean_numeric_series(
 # Helper: Load Summary Logger
 # ──────────────────────────────────────────────
 
-def _log_summary(df: pd.DataFrame, file_path: str, sheet_name) -> None:
+def _log_summary(df: pd.DataFrame, path: Path, sheet_name: str | int) -> None:
     """Build the full load-summary report as a single string and emit it at INFO level."""
-    file_name = os.path.basename(file_path)
     total_nulls = int(df.isnull().sum().sum())
     null_cols = df.columns[df.isnull().any()].tolist()
 
@@ -298,7 +330,7 @@ def _log_summary(df: pd.DataFrame, file_path: str, sheet_name) -> None:
         "=" * 56,
         "  Excel Ingestor — Load Summary",
         "=" * 56,
-        f"  File    : {file_name}",
+        f"  File    : {path.name}",
         f"  Sheet   : {sheet_name}",
         f"  Rows    : {len(df):,}",
         f"  Columns : {len(df.columns):,}",
@@ -314,7 +346,9 @@ def _log_summary(df: pd.DataFrame, file_path: str, sheet_name) -> None:
     for col, dtype in df.dtypes.items():
         null_count = int(df[col].isnull().sum())
         flag = f"  ⚠ {null_count} null(s)" if null_count else ""
-        lines.append(f"    {col:<30} {str(dtype):<10}{flag}")
+        # Truncate long column names to keep the summary table readable
+        col_display = col if len(col) <= 30 else col[:27] + "..."
+        lines.append(f"    {col_display:<30} {str(dtype):<10}{flag}")
     lines.append("=" * 56)
 
     logger.info("\n".join(lines))
@@ -324,16 +358,16 @@ def _log_summary(df: pd.DataFrame, file_path: str, sheet_name) -> None:
 # Helper: Error Handler
 # ──────────────────────────────────────────────
 
-def _handle_read_error(exc: Exception, file_path: str, sheet_name) -> None:
-    """Translate pandas / openpyxl exceptions into more actionable error messages."""
+def _handle_read_error(exc: Exception, path: Path, sheet_name: str | int) -> NoReturn:
+    """Translate pandas / openpyxl exceptions into more actionable errors and always re-raise."""
     msg = str(exc)
     if "Worksheet" in msg or "sheet" in msg.lower():
         raise KeyError(
-            f"[ingest_excel] Sheet '{sheet_name}' not found in '{os.path.basename(file_path)}'.\n"
+            f"[ingest_excel] Sheet '{sheet_name}' not found in '{path.name}'.\n"
             "Tip: use pd.ExcelFile(path).sheet_names to list all available sheets."
         ) from exc
     raise RuntimeError(
-        f"[ingest_excel] Failed to read '{os.path.basename(file_path)}': {msg}"
+        f"[ingest_excel] Failed to read '{path.name}': {msg}"
     ) from exc
 
 
@@ -368,10 +402,11 @@ Notes:
     - To use as a module instead:  from excel_ingestor import ingest_excel
 """.strip()
 
+
 if __name__ == "__main__":
     # Configure a clean handler for CLI use — no timestamp or level prefix,
-    # just the message. This only affects the root logger when run directly;
-    # it does not interfere with library callers' logging configuration.
+    # just the message. Only affects runs via `python excel_ingestor.py`;
+    # does not interfere with library callers' logging configuration.
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     args = sys.argv[1:]
@@ -380,13 +415,12 @@ if __name__ == "__main__":
         print(_HELP)
         sys.exit(0)
 
-    path = args[0]
-    sheet = args[1] if len(args) > 1 else 0
+    path_arg = args[0]
+    # sys.argv values are always str; convert digit strings to int sheet indices.
+    sheet_arg: str | int = args[1] if len(args) > 1 else 0
+    if isinstance(sheet_arg, str) and sheet_arg.isdigit():
+        sheet_arg = int(sheet_arg)
 
-    # If the sheet argument is a digit, treat it as a zero-based index
-    if isinstance(sheet, str) and sheet.isdigit():
-        sheet = int(sheet)
-
-    df = ingest_excel(path, sheet_name=sheet)
+    result = ingest_excel(path_arg, sheet_name=sheet_arg)
     print("\nFirst 10 rows:")
-    print(df.head(10).to_string(index=False))
+    print(result.head(10).to_string(index=False))
