@@ -24,17 +24,22 @@ Always start by reading these files:
 
 ### 1. Collect Baseline
 
-Read and summarize the current state:
+Read and summarize the current state using native Claude Code tools (cross-platform):
+
+- **Glob** `~/.claude/agents/*.md` → **Read** each file to extract `model:` and `tools:` from frontmatter
+- **Read** `~/.claude/settings.json` for current settings
+
+Shell alternatives if needed:
 
 ```bash
-# List all agents and their assigned models
+# macOS/Linux (bash/zsh):
 grep -h "^model:" ~/.claude/agents/*.md | sort | uniq -c | sort -rn
-
-# List all tools assigned per agent
 grep -h "^tools:" ~/.claude/agents/*.md
 
-# Show current settings
-cat ~/.claude/settings.json
+# Windows (PowerShell):
+Select-String -Path "$env:USERPROFILE\.claude\agents\*.md" -Pattern "^model:" |
+  ForEach-Object { $_.Line } | Group-Object | Sort-Object Count -Descending
+Get-Content "$env:USERPROFILE\.claude\settings.json"
 ```
 
 Score the baseline across five areas (1–5 each):
@@ -70,9 +75,7 @@ Read the `code-reviewer` agent and verify the dispatch table is complete and cur
 
 Check: do all agents listed in routing rules exist in `~/.claude/agents/`?
 
-```bash
-ls ~/.claude/agents/*.md
-```
+Use the Glob tool: `~/.claude/agents/*.md`
 
 ### 4. Hook Configuration Audit
 

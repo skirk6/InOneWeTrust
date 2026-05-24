@@ -46,16 +46,23 @@ git diff --name-only -- '*.py' 2>/dev/null | xargs grep -liE "\b(SELECT|INSERT|U
 git diff HEAD~1 --name-only -- '*.sql' '*.py' 2>/dev/null
 ```
 
-If all git diffs return nothing, search the project directly:
+If all git diffs return nothing, search the project directly using native tools (cross-platform):
 
+- **Glob** `**/*.sql` (excluding `.git/`, `.venv/`) to find all SQL files
+- **Grep** pattern `\b(SELECT|INSERT|UPDATE|DELETE|MERGE)\b` across `**/*.py` to find Python files with embedded SQL
+
+Shell alternatives:
 ```bash
-# Find all .sql files
-find . -name "*.sql" -not -path "./.git/*" -not -path "./.venv/*" 2>/dev/null | head -30
+# macOS/Linux:
+find . -name "*.sql" -not -path "./.git/*" -not -path "./.venv/*"
+grep -rliE "\b(SELECT|INSERT|UPDATE|DELETE|MERGE)\b" --include="*.py" --exclude-dir=.git --exclude-dir=.venv --exclude-dir=__pycache__ .
 
-# Find Python files that contain embedded SQL
-grep -rliE "\b(SELECT|INSERT|UPDATE|DELETE|MERGE)\b" --include="*.py" . \
-  --exclude-dir=.git --exclude-dir=.venv --exclude-dir=__pycache__ 2>/dev/null | head -30
+# Windows (PowerShell):
+Get-ChildItem -Recurse -Filter "*.sql" | Where-Object { $_.FullName -notmatch '\\\.git\\|\\\.venv\\' }
+Get-ChildItem -Recurse -Filter "*.py" | Where-Object { $_.FullName -notmatch '\\\.git\\|\\\.venv\\' } | Select-String -Pattern "\b(SELECT|INSERT|UPDATE|DELETE|MERGE)\b" | Select-Object -ExpandProperty Path -Unique
 ```
+
+**Cross-platform note:** Prefer the **Glob** and **Grep** tools over shell commands — they work identically on macOS and Windows. Shell alternatives are provided below for reference.
 
 If no files are found and none were provided directly, stop and report:
 *"No SQL or Python-with-SQL files detected — provide a file path or paste a query to review."*
@@ -81,17 +88,23 @@ For each Python file in scope, read the full file and identify all SQL strings b
 - **String variables** containing SQL keywords assigned earlier and passed later
 - **F-strings and `.format()` strings** — note parameterization method for security context
 
-Use this grep pass to locate SQL string boundaries within each Python file:
+Use the **Grep tool** to locate SQL string boundaries within each Python file (cross-platform):
 
+- Pattern `\.(execute|executemany|read_sql|read_sql_query)\s*\(` — finds execute() calls
+- Pattern `("""|''')` — finds triple-quoted string openings
+- Pattern `=\s*["']\s*(SELECT|INSERT|UPDATE|DELETE|WITH|MERGE)` — finds single-line SQL assignments
+
+Shell alternatives:
 ```bash
-# Find lines containing execute() calls with inline SQL
-grep -inE "\.(execute|executemany|read_sql|read_sql_query)\s*\(" <file> 2>/dev/null
+# macOS/Linux:
+grep -inE "\.(execute|executemany|read_sql|read_sql_query)\s*\(" <file>
+grep -inE '("""|'"'''"')' <file>
+grep -inE "=\s*([\"'])\s*(SELECT|INSERT|UPDATE|DELETE|WITH|MERGE)" <file>
 
-# Find triple-quoted string openings preceded by SQL keyword context
-grep -inE '("""|\x27\x27\x27)' <file> 2>/dev/null
-
-# Find single-line SQL strings assigned to variables
-grep -inE "=\s*(\"|\x27)\s*(SELECT|INSERT|UPDATE|DELETE|WITH|MERGE)" <file> 2>/dev/null
+# Windows (PowerShell):
+Select-String -Path <file> -Pattern "\.(execute|executemany|read_sql|read_sql_query)\s*\("
+Select-String -Path <file> -Pattern '("""|'"'''"')'
+Select-String -Path <file> -Pattern '=\s*["\'']\s*(SELECT|INSERT|UPDATE|DELETE|WITH|MERGE)'
 ```
 
 After locating the SQL strings, read the surrounding lines in full context. Extract the complete SQL text mentally — treat each distinct SQL string as a separate query to review, noting its line number in the Python file.
@@ -100,44 +113,30 @@ After locating the SQL strings, read the surrounding lines in full context. Extr
 
 ### Step 3: Quick Pattern Scan
 
-Run these grep scans against all files in scope (both `.sql` files and `.py` files containing embedded SQL). Each match is a candidate finding — read the full context before reporting.
+Use the **Grep tool** for all pattern scans — it works identically on macOS and Windows. Run each pattern against all files in scope. Each match is a candidate finding — read the full context before reporting.
 
+| Pattern to Grep | What It Catches |
+|---|---|
+| `FROM\s+\w+(\s+\w+)?\s*,\s*\w+` | Cartesian product — comma-separated FROM |
+| `^\s*SELECT\s+\*` | SELECT star |
+| `NOT\s+IN\s*\(\s*SELECT` | NOT IN with subquery (NULL trap) |
+| `WHERE[^;]*(UPPER\|LOWER\|TRIM\|CAST\|SUBSTR\|FORMAT\|TO_DATE\|OREPLACE)\s*\(` | Function on partition column |
+| `LIKE\s+'%[^']` | Leading wildcard LIKE |
+| `\bUNION\b` | UNION (check manually if UNION ALL follows) |
+| `ORDER\s+BY` | ORDER BY (flag if inside CTE or subquery) |
+| `\(\s*SELECT[^)]+WHERE[^)]+\.[^)]+\)` | Correlated subquery |
+| `(RANK\|ROW_NUMBER\|DENSE_RANK\|SUM\|AVG\|COUNT)\s*\(\s*\)\s+OVER\s*\(\s*ORDER` | Window without PARTITION BY |
+| `UPDATE[^;]+SET[^;]+(id\|key\|code\|num)\s*=` | UPDATE on likely PI column |
+| `\bIN\s*\([^)]{200,}\)` | Large IN list (>200 chars of literals) |
+| `(f"\|f'\|\.format\s*\().*\b(SELECT\|INSERT\|UPDATE\|DELETE)\b` | F-string or .format() SQL injection risk |
+
+All patterns should be matched case-insensitively. Use the Grep tool's `case_insensitive` option where available.
+
+Shell reference (macOS/Linux only):
 ```bash
-# Cartesian product risk: comma-separated FROM clause
-grep -inE "FROM\s+\w+(\s+\w+)?\s*,\s*\w+" <file> 2>/dev/null
-
-# SELECT star
-grep -inE "^\s*SELECT\s+\*|,\s*\*\s*(FROM|,)" <file> 2>/dev/null
-
-# NOT IN with subquery (NULL trap)
-grep -inE "NOT\s+IN\s*\(\s*SELECT" <file> 2>/dev/null
-
-# Function applied to column in WHERE (partition elimination breaker)
-grep -inE "WHERE[^;]*(UPPER|LOWER|TRIM|CAST|SUBSTR|FORMAT|TO_DATE|OREPLACE)\s*\(" <file> 2>/dev/null
-
-# LIKE with leading wildcard
-grep -inE "LIKE\s+'%[^']" <file> 2>/dev/null
-
-# UNION without ALL
-grep -inE "\bUNION\b" <file> 2>/dev/null | grep -ivE "UNION\s+ALL"
-
-# ORDER BY inside a subquery or CTE (not final SELECT)
-grep -inE "ORDER\s+BY" <file> 2>/dev/null
-
-# Correlated subquery pattern
-grep -inE "\(\s*SELECT[^)]+WHERE[^)]+\.[^)]+\)" <file> 2>/dev/null
-
-# Window function without PARTITION BY
-grep -inE "(RANK|ROW_NUMBER|DENSE_RANK|SUM|AVG|COUNT)\s*\(\s*\)\s+OVER\s*\(\s*ORDER" <file> 2>/dev/null
-
-# UPDATE on a likely-PI column (heuristic: updating primary key-like columns)
-grep -inE "UPDATE[^;]+SET[^;]+(id|key|code|num)\s*=" <file> 2>/dev/null
-
-# Large IN list (more than ~5 literals — flag for count check)
-grep -inE "\bIN\s*\([^)]{200,}\)" <file> 2>/dev/null
-
-# String formatting into SQL (f-string or .format() — SQL injection risk signal)
-grep -inE "(f\"|f\x27|\.format\s*\().*\b(SELECT|INSERT|UPDATE|DELETE)\b" <file> 2>/dev/null
+grep -inE "FROM\s+\w+(\s+\w+)?\s*,\s*\w+" <file>
+grep -inE "NOT\s+IN\s*\(\s*SELECT" <file>
+# etc.
 ```
 
 ### Step 4: Read Files in Full

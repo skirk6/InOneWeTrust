@@ -28,18 +28,25 @@ Identify what changed. **Run all applicable reviewers in parallel — never sequ
 
 ### Detect Python file types (content-based, not filename-based)
 
-For each changed `*.py` file, check its imports:
+Get changed files with `git diff --name-only`, then use the **Grep tool** to check each `.py` file's imports.
 
 ```bash
-# Find FastAPI files among changed Python files
+# Get changed file list (cross-platform):
+git diff --staged --name-only
+git diff --name-only
+
+# macOS/Linux — filter and inspect:
 git diff --name-only | grep '\.py$' | xargs grep -l "from fastapi\|import fastapi\|APIRouter\|@app\." 2>/dev/null
-
-# Find ORM/migration/SQL files among changed files
 git diff --name-only | grep -E '(models\.py$|migrations?/.*\.py$|alembic/versions/.*\.py$|\.sql$)'
+git diff --name-only | grep -E '(\.claude/agents/|agents/).*\.md$'
 
-# Find changed agent definition files
-git diff --name-only | grep -E '(\.claude.agents.|Dev.AI.Agents.).*\.md$'
+# Windows (PowerShell):
+git diff --name-only | Where-Object { $_ -match '\.py$' } | Where-Object { Select-String -Path $_ -Pattern "from fastapi|import fastapi|APIRouter|@app\." -Quiet -ErrorAction SilentlyContinue }
+git diff --name-only | Where-Object { $_ -match '(models\.py$|migrations?[\\/].*\.py$|\.sql$)' }
+git diff --name-only | Where-Object { $_ -match '(\.claude[\\/]agents[\\/]|agents[\\/]).*\.md$' }
 ```
+
+Cross-platform alternative: use the **Grep tool** with pattern `from fastapi|import fastapi|APIRouter|@app\.` on each changed `.py` file.
 
 | What Changed | Invoke |
 |---|---|
@@ -122,22 +129,25 @@ is automatic regardless of other findings.
 
 ## Step 5: Test Coverage Check
 
-First detect the project type, then run the appropriate tool:
+Use the **Glob tool** to detect project type, then run the appropriate tool:
 
 ```bash
-# Detect and run
-if [ -f "pyproject.toml" ] || [ -f "pytest.ini" ] || [ -f "setup.cfg" ]; then
-  pytest --cov=. --cov-report=term-missing -q 2>/dev/null | tail -8
-fi
+# Python — if pyproject.toml / pytest.ini / setup.cfg exists (Glob to detect):
+pytest --cov=. --cov-report=term-missing -q
 
-if [ -f "package.json" ]; then
-  # Prefer vitest if configured, otherwise jest
-  if grep -q '"vitest"' package.json 2>/dev/null; then
-    npx vitest run --coverage --reporter=verbose 2>/dev/null | tail -10
-  else
-    npx jest --coverage --passWithNoTests --silent 2>/dev/null | tail -10
-  fi
-fi
+# Node.js — if package.json exists (Glob to detect), Read it to check for "vitest":
+# vitest configured:
+npx vitest run --coverage
+# jest (default):
+npx jest --coverage --passWithNoTests
+
+# macOS/Linux shell detection:
+[ -f "pyproject.toml" ] || [ -f "pytest.ini" ] || [ -f "setup.cfg" ] && pytest --cov=. --cov-report=term-missing -q
+[ -f "package.json" ] && grep -q '"vitest"' package.json && npx vitest run --coverage || npx jest --coverage --passWithNoTests
+
+# Windows (PowerShell):
+if (Test-Path "pyproject.toml") { pytest --cov=. --cov-report=term-missing -q }
+if (Test-Path "package.json") { if (Select-String "vitest" package.json -Quiet) { npx vitest run --coverage } else { npx jest --coverage --passWithNoTests } }
 ```
 
 - [ ] Tests exist for new behavior — *No → flag as HIGH: new code without tests*

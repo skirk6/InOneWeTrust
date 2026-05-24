@@ -40,13 +40,21 @@ You DO NOT refactor or rewrite code — you report findings only.
    If linting fails with errors (not warnings), report and stop.
 
 5. **Run tests:**
+
+   Use the **Read tool** to read `package.json` and check whether `"vitest"` appears, then run the appropriate runner:
+
    ```bash
-   # Prefer vitest if configured, otherwise jest
-   if grep -q '"vitest"' package.json 2>/dev/null; then
-     npx vitest run --coverage 2>/dev/null | tail -10
-   else
-     npx jest --ci --coverage --passWithNoTests 2>/dev/null | tail -10
-   fi
+   # vitest configured:
+   npx vitest run --coverage
+
+   # jest (default):
+   npx jest --ci --coverage --passWithNoTests
+
+   # macOS/Linux shell detection:
+   grep -q '"vitest"' package.json 2>/dev/null && npx vitest run --coverage || npx jest --ci --coverage --passWithNoTests
+
+   # Windows (PowerShell):
+   if (Select-String '"vitest"' package.json -Quiet) { npx vitest run --coverage } else { npx jest --ci --coverage --passWithNoTests }
    ```
 
 6. **Read modified files** and surrounding context before commenting on any finding.
