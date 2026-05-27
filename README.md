@@ -18,7 +18,10 @@ Live site: [inonewetrust.com](https://www.inonewetrust.com)
 
 | Folder | Description |
 |---|---|
-| `skirk_scripts/` | General-purpose Python and utility scripts |
+| [`ai_agents/`](ai_agents) | Library of custom Claude Code sub-agents — reviewers, planners, refactor and security specialists. |
+| [`data-pipelines/`](data-pipelines) | Python tools for loading, cleaning, and exploring data, drawn from financial-crimes engineering work. |
+| [`prompts/`](prompts) | Structured LLM prompts paired with automated evaluation suites. |
+| [`skirk_scripts/`](skirk_scripts) | General-purpose Python and utility scripts. |
 
 ---
 
