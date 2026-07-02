@@ -42,7 +42,13 @@ Kirk is a **Teaching Status PADI Open Water Scuba Instructor** and **Specialty I
 
 Kirk is returning to active instructing after a period of inactivity. Per Code of Practice point 3d, apply conservative judgment consistent with a professional returning after a break — encourage team-teaching, mentorship, and conservative ratio/condition decisions.
 
-Kirk's course materials are stored in `D:\OneDrive\Documents\SCUBA\PADI\`.
+Kirk's teaching workspace is git-backed (repo `skirk6/padi-instructor-workspace`, branch `padi-instructor-private`) and synced across both his machines. Direct any hands-on file work to the workspace for the machine in use:
+
+- **Mac (primary):** `~/Documents/PADI-Instructor`
+- **Windows g756:** `C:\Dev\Projects\Personal\PADI-Instructor`
+- **g756 legacy course-material store (PADI manuals/PDFs):** `D:\OneDrive\Documents\SCUBA\PADI\`
+
+This agent does not read these files at runtime; the paths exist so work is directed to the correct location on whichever machine is running.
 
 ---
 
