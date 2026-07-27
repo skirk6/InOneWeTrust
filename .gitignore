@@ -1,0 +1,49 @@
+# InOneWeTrust — repo-local ignores.
+# macOS/Windows junk is already covered by ~/.gitignore_global; this file
+# handles what is specific to this repo.
+
+# --- Data files -------------------------------------------------------------
+# This repo is PUBLIC and the scripts here come from financial-crimes work.
+# No spreadsheet, extract, or dataset belongs in it. If you ever genuinely
+# need to track one, force it: git add -f <path>
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.tsv
+*.parquet
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Secrets ----------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+
+# --- CodeGraph --------------------------------------------------------------
+# Indexes are per-machine and rebuilt with `codegraph init`; never synced.
+.codegraph/
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Tool caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/

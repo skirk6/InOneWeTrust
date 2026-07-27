@@ -1,0 +1,109 @@
+# InOneWeTrust — tooling configuration.
+#
+# This repo is a collection of standalone scripts, not an installable package,
+# so there is deliberately no [build-system] table. `pip install -e .` will not
+# work here and is not meant to. The [project] table below exists to record
+# dependencies in one place instead of only in per-module docstrings.
+
+[project]
+name = "inonewetrust"
+version = "0.1.0"
+description = "Scripts, tools, and Claude Code agents by Scott Kirk."
+requires-python = ">=3.12"
+license = { file = "LICENSE" }
+authors = [{ name = "Scott Kirk" }]
+
+# Core runtime deps, shared across data-pipelines/.
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# excel_ingestor.py reads .xlsx via pandas, which needs an engine.
+excel = ["openpyxl>=3.1"]
+
+# GetUpstreamApp.py: tkinter is stdlib; these are the extras it reaches for.
+# PyQt5 is the automatic fallback when tkinter is unavailable.
+gui = ["tkcalendar>=1.6", "PyQt5>=5.15"]
+
+# prompts/web-research/eval.py calls the Anthropic API.
+llm = ["anthropic>=0.40"]
+
+dev = [
+    "ruff>=0.15",
+    "mypy>=1.15",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+# ---------------------------------------------------------------------------
+# ruff
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".codegraph", "__pycache__"]
+
+[tool.ruff.lint]
+# E501 (line-too-long) is deliberately not selected. 24 existing lines exceed
+# 120 chars, mostly long docstrings and SQL strings the formatter will not
+# rewrap. Add "E501" here once those are dealt with.
+select = [
+    "E4",   # imports
+    "E7",   # statement style
+    "E9",   # runtime errors
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests reach into private helpers on purpose (ev._parse_grade etc).
+"**/test_*.py" = ["SLF001"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+check_untyped_defs = true
+exclude = ["\\.codegraph/", "__pycache__/"]
+
+# Third-party packages without bundled type stubs.
+[[tool.mypy.overrides]]
+module = ["tkcalendar.*", "PyQt5.*", "pandas.*", "numpy.*"]
+ignore_missing_imports = true
+
+# GetUpstreamApp.py is a 603-line tkinter/PyQt5 GUI. Typing GUI callbacks
+# fully is not worth it; keep the rest of the repo strict instead.
+[[tool.mypy.overrides]]
+module = ["GetUpstreamApp"]
+disallow_untyped_defs = false
+check_untyped_defs = false
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["prompts", "data-pipelines"]
+# test_eval.py does `import eval as ev`, a sibling import. This puts that
+# directory on sys.path so the test runs from the repo root, not just from
+# inside prompts/web-research/.
+pythonpath = ["prompts/web-research"]
+addopts = "-ra --strict-markers"
